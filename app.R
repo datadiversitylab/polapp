@@ -11,15 +11,15 @@ global_data <- reactiveValues(
 
 ui <- fluidPage(
   titlePanel("Multi-Question Conference Polling"),
-  
   tabsetPanel(
     tabPanel("Guest Panel",
              fluidRow(
-               column(6, textInput("guest_token", "Enter Conference Token:")
-               ),
-               column(6, actionButton("submit_token", "Access Room"))
+               column(6,
+                      textInput("guest_token", "Enter Access Token:"),
+                      actionButton("access_room", "Access Room")
+               )
              ),
-             uiOutput("guest_room_info"),
+             uiOutput("user_count_ui_guest"),
              conditionalPanel(
                condition = "output.validGuestConf",
                uiOutput("question_ui_guest"),
@@ -38,9 +38,12 @@ ui <- fluidPage(
     ),
     tabPanel("Admin Panel",
              fluidRow(
-               column(12,
+               column(6,
                       textInput("new_conf_id", "Create New Conference ID:"),
                       actionButton("create_conf", "Create Conference")
+               ),
+               column(6,
+                      verbatimTextOutput("admin_token_display")
                )
              ),
              uiOutput("user_count_ui"),
@@ -93,33 +96,24 @@ server <- function(input, output, session) {
     global_data$conferences[[id]] <- list()
     global_data$settings[[id]] <- list(max_votes = 5, allow_multiple = FALSE)
     global_data$user_counts[[id]] <- list()
-    global_data$tokens[[token]] <- id
+    global_data$tokens[[id]] <- token
     is_admin(TRUE)
     admin_conference_id(id)
     updateTextInput(session, "new_conf_id", value = "")
-    showNotification(paste("Created Conference ID:", id, "Token:", token))
+    showNotification(paste("Created Conference ID:", id))
   })
   
-  observeEvent(input$submit_token, {
-    token <- trimws(input$guest_token)
-    if (token %in% names(global_data$tokens)) {
-      guest_conference_id(global_data$tokens[[token]])
-    } else {
-      showNotification("Invalid token", type = "error")
-    }
+  output$admin_token_display <- renderText({
+    req(admin_conference_id())
+    paste("Admin Token:", global_data$tokens[[admin_conference_id()]])
   })
   
-  output$validGuestConf <- reactive({ !is.null(guest_conference_id()) })
-  outputOptions(output, "validGuestConf", suspendWhenHidden = FALSE)
-  
-  output$guest_room_info <- renderUI({
-    conf <- guest_conference_id()
-    if (!is.null(conf)) h4(paste("Accessing Room:", conf)) else NULL
-  })
+  output$isAdmin <- reactive({ is_admin() })
+  outputOptions(output, "isAdmin", suspendWhenHidden = FALSE)
   
   observe({
+    req(admin_conference_id())
     conf <- admin_conference_id()
-    req(conf)
     questions <- global_data$conferences[[conf]]
     if (length(questions) == 0) return()
     question_ids <- names(questions)
@@ -128,6 +122,20 @@ server <- function(input, output, session) {
     updateSelectInput(session, "delete_question_id", choices = question_ids)
     updateSelectInput(session, "restart_question_id", choices = question_ids)
   })
+  
+  observeEvent(input$access_room, {
+    token_input <- trimws(input$guest_token)
+    matched_conf <- names(global_data$tokens)[sapply(global_data$tokens, identical, token_input)]
+    if (length(matched_conf) == 1) {
+      guest_conference_id(matched_conf)
+      showNotification(paste("Access granted to:", matched_conf))
+    } else {
+      showNotification("Invalid token", type = "error")
+    }
+  })
+  
+  output$validGuestConf <- reactive({ !is.null(guest_conference_id()) })
+  outputOptions(output, "validGuestConf", suspendWhenHidden = FALSE)
   
   observe({
     conf <- guest_conference_id()
@@ -150,9 +158,6 @@ server <- function(input, output, session) {
     if (is.null(conf) || is.null(global_data$user_counts[[conf]])) return(NULL)
     h5(paste0("Users online for ", conf, ": ", length(global_data$user_counts[[conf]])))
   })
-  
-  output$isAdmin <- reactive({ is_admin() })
-  outputOptions(output, "isAdmin", suspendWhenHidden = FALSE)
   
   observeEvent(input$add_question, {
     req(admin_conference_id(), input$new_question_text, is_admin())
