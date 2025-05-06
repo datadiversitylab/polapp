@@ -9,7 +9,7 @@ global_data <- reactiveValues(
 )
 
 ui <- fluidPage(
-  titlePanel("Pola - polling for conferences and events"),
+  titlePanel("Polapp - polling for conferences and events"),
   
   tabsetPanel(
     tabPanel("Guest panel",
