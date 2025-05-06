@@ -1,10 +1,12 @@
 library(shiny)
 library(DT)
 
+# Global storage
 global_data <- reactiveValues(
   conferences = list(),
   settings = list(),
-  user_counts = list()
+  user_counts = list(),
+  tokens = list()
 )
 
 ui <- fluidPage(
@@ -13,9 +15,11 @@ ui <- fluidPage(
   tabsetPanel(
     tabPanel("Guest Panel",
              fluidRow(
-               column(6, uiOutput("conf_checkbox_ui"))
+               column(6, textInput("guest_token", "Enter Conference Token:")
+               ),
+               column(6, actionButton("submit_token", "Access Room"))
              ),
-             uiOutput("user_count_ui_guest"),
+             uiOutput("guest_room_info"),
              conditionalPanel(
                condition = "output.validGuestConf",
                uiOutput("question_ui_guest"),
@@ -77,29 +81,45 @@ server <- function(input, output, session) {
   vote_message <- reactiveVal("")
   is_admin <- reactiveVal(FALSE)
   admin_conference_id <- reactiveVal(NULL)
-  selected_guest_conference <- reactiveVal(NULL)
+  guest_conference_id <- reactiveVal(NULL)
   
-  observe({
-    confs <- names(global_data$conferences)
-    output$conf_checkbox_ui <- renderUI({
-      checkboxGroupInput("conf_id_checkbox", "Available Conferences", choices = confs, selected = selected_guest_conference())
-    })
+  observeEvent(input$create_conf, {
+    id <- trimws(input$new_conf_id)
+    if (id == "" || id %in% names(global_data$conferences)) {
+      showNotification("Invalid or duplicate ID", type = "error")
+      return()
+    }
+    token <- paste0(sample(c(LETTERS, letters, 0:9), 8, replace = TRUE), collapse = "")
+    global_data$conferences[[id]] <- list()
+    global_data$settings[[id]] <- list(max_votes = 5, allow_multiple = FALSE)
+    global_data$user_counts[[id]] <- list()
+    global_data$tokens[[token]] <- id
+    is_admin(TRUE)
+    admin_conference_id(id)
+    updateTextInput(session, "new_conf_id", value = "")
+    showNotification(paste("Created Conference ID:", id, "Token:", token))
   })
   
-  observeEvent(input$conf_id_checkbox, {
-    if (length(input$conf_id_checkbox) == 1) {
-      selected_guest_conference(input$conf_id_checkbox)
+  observeEvent(input$submit_token, {
+    token <- trimws(input$guest_token)
+    if (token %in% names(global_data$tokens)) {
+      guest_conference_id(global_data$tokens[[token]])
+    } else {
+      showNotification("Invalid token", type = "error")
     }
   })
   
-  output$validGuestConf <- reactive({
-    !is.null(selected_guest_conference())
-  })
+  output$validGuestConf <- reactive({ !is.null(guest_conference_id()) })
   outputOptions(output, "validGuestConf", suspendWhenHidden = FALSE)
   
+  output$guest_room_info <- renderUI({
+    conf <- guest_conference_id()
+    if (!is.null(conf)) h4(paste("Accessing Room:", conf)) else NULL
+  })
+  
   observe({
-    req(admin_conference_id())
     conf <- admin_conference_id()
+    req(conf)
     questions <- global_data$conferences[[conf]]
     if (length(questions) == 0) return()
     question_ids <- names(questions)
@@ -110,7 +130,7 @@ server <- function(input, output, session) {
   })
   
   observe({
-    conf <- selected_guest_conference()
+    conf <- guest_conference_id()
     req(conf)
     if (is.null(global_data$user_counts[[conf]])) global_data$user_counts[[conf]] <- list()
     global_data$user_counts[[conf]][[session_id]] <- TRUE
@@ -126,24 +146,9 @@ server <- function(input, output, session) {
   })
   
   output$user_count_ui_guest <- renderUI({
-    conf <- selected_guest_conference()
+    conf <- guest_conference_id()
     if (is.null(conf) || is.null(global_data$user_counts[[conf]])) return(NULL)
     h5(paste0("Users online for ", conf, ": ", length(global_data$user_counts[[conf]])))
-  })
-  
-  observeEvent(input$create_conf, {
-    id <- trimws(input$new_conf_id)
-    if (id == "" || id %in% names(global_data$conferences)) {
-      showNotification("Invalid or duplicate ID", type = "error")
-      return()
-    }
-    global_data$conferences[[id]] <- list()
-    global_data$settings[[id]] <- list(max_votes = 5, allow_multiple = FALSE)
-    global_data$user_counts[[id]] <- list()
-    is_admin(TRUE)
-    admin_conference_id(id)
-    updateTextInput(session, "new_conf_id", value = "")
-    showNotification(paste("Created Conference ID:", id))
   })
   
   output$isAdmin <- reactive({ is_admin() })
@@ -186,7 +191,7 @@ server <- function(input, output, session) {
   })
   
   output$question_ui_guest <- renderUI({
-    conf <- selected_guest_conference()
+    conf <- guest_conference_id()
     req(conf)
     questions <- global_data$conferences[[conf]]
     if (length(questions) == 0) return(h5("No questions yet."))
@@ -202,8 +207,8 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$submit_answer, {
-    req(selected_guest_conference(), input$question_id_guest, input$answer)
-    conf <- selected_guest_conference()
+    req(guest_conference_id(), input$question_id_guest, input$answer)
+    conf <- guest_conference_id()
     qid <- input$question_id_guest
     responses <- global_data$conferences[[conf]][[qid]]$responses
     new_id <- if (nrow(responses) == 0) 1 else max(responses$ID) + 1
@@ -215,8 +220,8 @@ server <- function(input, output, session) {
   })
   
   output$vote_table <- renderDT({
-    req(selected_guest_conference(), input$question_id_guest)
-    conf <- selected_guest_conference()
+    req(guest_conference_id(), input$question_id_guest)
+    conf <- guest_conference_id()
     qid <- input$question_id_guest
     responses <- global_data$conferences[[conf]][[qid]]$responses
     if (nrow(responses) == 0) return(NULL)
@@ -232,8 +237,8 @@ server <- function(input, output, session) {
   output$vote_warning <- renderText({ vote_message() })
   
   observeEvent(input$vote_table_rows_selected, {
-    req(selected_guest_conference(), input$question_id_guest)
-    conf <- selected_guest_conference()
+    req(guest_conference_id(), input$question_id_guest)
+    conf <- guest_conference_id()
     qid <- input$question_id_guest
     selected <- input$vote_table_rows_selected
     if (length(selected) == 0) return()
