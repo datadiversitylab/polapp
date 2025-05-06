@@ -1,13 +1,10 @@
 library(shiny)
 library(DT)
 
-# Global storage
 global_data <- reactiveValues(
   conferences = list(),
   settings = list(),
-  user_counts = list(),
-  admin_tokens = list(),
-  admin_logged_in = reactiveVal(FALSE)
+  user_counts = list()
 )
 
 ui <- fluidPage(
@@ -16,13 +13,11 @@ ui <- fluidPage(
   tabsetPanel(
     tabPanel("Guest Panel",
              fluidRow(
-               column(6,
-                      selectInput("conf_id_select_guest", "Select Conference ID:", choices = NULL)
-               )
+               column(6, uiOutput("conf_checkbox_ui"))
              ),
              uiOutput("user_count_ui_guest"),
              conditionalPanel(
-               condition = "input.conf_id_select_guest != ''",
+               condition = "output.validGuestConf",
                uiOutput("question_ui_guest"),
                sidebarLayout(
                  sidebarPanel(
@@ -39,12 +34,7 @@ ui <- fluidPage(
     ),
     tabPanel("Admin Panel",
              fluidRow(
-               column(6,
-                      selectInput("conf_id_select", "Select Conference ID:", choices = NULL),
-                      textInput("admin_token_input", "Admin Token:"),
-                      actionButton("login_admin", "Log In as Admin")
-               ),
-               column(6,
+               column(12,
                       textInput("new_conf_id", "Create New Conference ID:"),
                       actionButton("create_conf", "Create Conference")
                )
@@ -85,16 +75,31 @@ server <- function(input, output, session) {
   session_id <- paste0("user_", as.integer(Sys.time()), "_", sample(10000, 1))
   user_votes <- reactiveVal(list())
   vote_message <- reactiveVal("")
+  is_admin <- reactiveVal(FALSE)
+  admin_conference_id <- reactiveVal(NULL)
+  selected_guest_conference <- reactiveVal(NULL)
   
   observe({
     confs <- names(global_data$conferences)
-    updateSelectInput(session, "conf_id_select", choices = confs)
-    updateSelectInput(session, "conf_id_select_guest", choices = confs)
+    output$conf_checkbox_ui <- renderUI({
+      checkboxGroupInput("conf_id_checkbox", "Available Conferences", choices = confs, selected = selected_guest_conference())
+    })
   })
   
+  observeEvent(input$conf_id_checkbox, {
+    if (length(input$conf_id_checkbox) == 1) {
+      selected_guest_conference(input$conf_id_checkbox)
+    }
+  })
+  
+  output$validGuestConf <- reactive({
+    !is.null(selected_guest_conference())
+  })
+  outputOptions(output, "validGuestConf", suspendWhenHidden = FALSE)
+  
   observe({
-    req(input$conf_id_select)
-    conf <- input$conf_id_select
+    req(admin_conference_id())
+    conf <- admin_conference_id()
     questions <- global_data$conferences[[conf]]
     if (length(questions) == 0) return()
     question_ids <- names(questions)
@@ -105,8 +110,8 @@ server <- function(input, output, session) {
   })
   
   observe({
-    req(input$conf_id_select_guest)
-    conf <- input$conf_id_select_guest
+    conf <- selected_guest_conference()
+    req(conf)
     if (is.null(global_data$user_counts[[conf]])) global_data$user_counts[[conf]] <- list()
     global_data$user_counts[[conf]][[session_id]] <- TRUE
     session$onSessionEnded(function() {
@@ -115,53 +120,38 @@ server <- function(input, output, session) {
   })
   
   output$user_count_ui <- renderUI({
-    conf <- input$conf_id_select
-    if (is.null(global_data$user_counts[[conf]])) return(NULL)
+    conf <- admin_conference_id()
+    if (is.null(conf) || is.null(global_data$user_counts[[conf]])) return(NULL)
     h5(paste0("Users online for ", conf, ": ", length(global_data$user_counts[[conf]])))
   })
   
   output$user_count_ui_guest <- renderUI({
-    conf <- input$conf_id_select_guest
-    if (is.null(global_data$user_counts[[conf]])) return(NULL)
+    conf <- selected_guest_conference()
+    if (is.null(conf) || is.null(global_data$user_counts[[conf]])) return(NULL)
     h5(paste0("Users online for ", conf, ": ", length(global_data$user_counts[[conf]])))
   })
   
   observeEvent(input$create_conf, {
     id <- trimws(input$new_conf_id)
     if (id == "" || id %in% names(global_data$conferences)) {
-      showNotification("Invalid input or duplicate ID", type = "error")
+      showNotification("Invalid or duplicate ID", type = "error")
       return()
     }
-    token <- paste0(sample(c(LETTERS, letters, 0:9), 8, replace = TRUE), collapse = "")
     global_data$conferences[[id]] <- list()
     global_data$settings[[id]] <- list(max_votes = 5, allow_multiple = FALSE)
     global_data$user_counts[[id]] <- list()
-    global_data$admin_tokens[[id]] <- token
-    global_data$admin_logged_in(TRUE)
+    is_admin(TRUE)
+    admin_conference_id(id)
     updateTextInput(session, "new_conf_id", value = "")
-    updateSelectInput(session, "conf_id_select", selected = id)
-    showNotification(paste("Created Conference ID:", id, "Token:", token))
+    showNotification(paste("Created Conference ID:", id))
   })
   
-  observeEvent(input$login_admin, {
-    req(input$conf_id_select, input$admin_token_input)
-    token <- global_data$admin_tokens[[input$conf_id_select]]
-    if (!is.null(token) && input$admin_token_input == token) {
-      global_data$admin_logged_in(TRUE)
-      showNotification("Admin login successful")
-    } else {
-      showNotification("Invalid token", type = "error")
-    }
-  })
-  
-  output$isAdmin <- reactive({
-    global_data$admin_logged_in()
-  })
+  output$isAdmin <- reactive({ is_admin() })
   outputOptions(output, "isAdmin", suspendWhenHidden = FALSE)
   
   observeEvent(input$add_question, {
-    req(input$conf_id_select, input$new_question_text, global_data$admin_logged_in())
-    conf <- input$conf_id_select
+    req(admin_conference_id(), input$new_question_text, is_admin())
+    conf <- admin_conference_id()
     question_id <- paste0("q", as.integer(Sys.time()))
     global_data$conferences[[conf]][[question_id]] <- list(
       text = input$new_question_text,
@@ -172,14 +162,14 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$delete_question, {
-    req(input$conf_id_select, input$delete_question_id, global_data$admin_logged_in())
-    global_data$conferences[[input$conf_id_select]][[input$delete_question_id]] <- NULL
+    req(admin_conference_id(), input$delete_question_id, is_admin())
+    global_data$conferences[[admin_conference_id()]][[input$delete_question_id]] <- NULL
     showNotification("Question deleted.", type = "warning")
   })
   
   observeEvent(input$restart_question, {
-    req(input$conf_id_select, input$restart_question_id, global_data$admin_logged_in())
-    conf <- input$conf_id_select
+    req(admin_conference_id(), input$restart_question_id, is_admin())
+    conf <- admin_conference_id()
     qid <- input$restart_question_id
     if (!is.null(global_data$conferences[[conf]][[qid]])) {
       global_data$conferences[[conf]][[qid]]$responses <- data.frame(ID = integer(), Answer = character(), Votes = integer(), stringsAsFactors = FALSE)
@@ -188,32 +178,32 @@ server <- function(input, output, session) {
   })
   
   observeEvent(input$apply_settings, {
-    req(input$conf_id_select, global_data$admin_logged_in())
-    global_data$settings[[input$conf_id_select]] <- list(
+    req(admin_conference_id(), is_admin())
+    global_data$settings[[admin_conference_id()]] <- list(
       max_votes = input$max_votes,
       allow_multiple = input$allow_multiple
     )
   })
   
   output$question_ui_guest <- renderUI({
-    req(input$conf_id_select_guest)
-    conf <- input$conf_id_select_guest
+    conf <- selected_guest_conference()
+    req(conf)
     questions <- global_data$conferences[[conf]]
     if (length(questions) == 0) return(h5("No questions yet."))
     selectInput("question_id_guest", "Choose a question:", choices = setNames(names(questions), sapply(questions, `[[`, "text")))
   })
   
   output$question_ui_admin <- renderUI({
-    req(input$conf_id_select, global_data$admin_logged_in())
-    conf <- input$conf_id_select
+    req(admin_conference_id(), is_admin())
+    conf <- admin_conference_id()
     questions <- global_data$conferences[[conf]]
     if (length(questions) == 0) return(h5("No questions available."))
     selectInput("question_id_admin", "Select a question to view:", choices = setNames(names(questions), sapply(questions, `[[`, "text")))
   })
   
   observeEvent(input$submit_answer, {
-    req(input$conf_id_select_guest, input$question_id_guest, input$answer)
-    conf <- input$conf_id_select_guest
+    req(selected_guest_conference(), input$question_id_guest, input$answer)
+    conf <- selected_guest_conference()
     qid <- input$question_id_guest
     responses <- global_data$conferences[[conf]][[qid]]$responses
     new_id <- if (nrow(responses) == 0) 1 else max(responses$ID) + 1
@@ -225,8 +215,8 @@ server <- function(input, output, session) {
   })
   
   output$vote_table <- renderDT({
-    req(input$conf_id_select_guest, input$question_id_guest)
-    conf <- input$conf_id_select_guest
+    req(selected_guest_conference(), input$question_id_guest)
+    conf <- selected_guest_conference()
     qid <- input$question_id_guest
     responses <- global_data$conferences[[conf]][[qid]]$responses
     if (nrow(responses) == 0) return(NULL)
@@ -242,8 +232,8 @@ server <- function(input, output, session) {
   output$vote_warning <- renderText({ vote_message() })
   
   observeEvent(input$vote_table_rows_selected, {
-    req(input$conf_id_select_guest, input$question_id_guest)
-    conf <- input$conf_id_select_guest
+    req(selected_guest_conference(), input$question_id_guest)
+    conf <- selected_guest_conference()
     qid <- input$question_id_guest
     selected <- input$vote_table_rows_selected
     if (length(selected) == 0) return()
@@ -272,14 +262,12 @@ server <- function(input, output, session) {
     votes[id_char] <- current_vote + 1
     votes_all[[qid]] <- votes
     user_votes(votes_all)
-    
-    # Preserve the selected question
     updateSelectInput(session, "question_id_guest", selected = qid)
   })
   
   output$admin_table <- renderDT({
-    req(input$conf_id_select, input$question_id_admin, global_data$admin_logged_in())
-    conf <- input$conf_id_select
+    req(admin_conference_id(), input$question_id_admin, is_admin())
+    conf <- admin_conference_id()
     qid <- input$question_id_admin
     responses <- global_data$conferences[[conf]][[qid]]$responses
     if (nrow(responses) == 0) return(NULL)
