@@ -1,6 +1,7 @@
 library(shiny)
 library(DT)
 
+# Global storage
 global_data <- reactiveValues(
   conferences = list(),
   settings = list(),
@@ -9,15 +10,36 @@ global_data <- reactiveValues(
 )
 
 ui <- fluidPage(
-  titlePanel("Polapp - polling for conferences and events"),
+  tags$div(
+    style = "text-align: center;",
+    h1("Polapp"),
+    h4("Interactive and real-time polling system"),
+    br()
+  ),  
+  fluidRow(
+    column(12,
+           wellPanel(
+             p("Polapp is a live polling platform designed for conferences, events, workshops, meetings, and similar events. Admins can create unique rooms, design questions, and enable access for attendees via unique tokens. Attendees can suggest answers and vote in real-time. Admins can manage questions, voting settings, and get summary statistics."),
+             selectInput("user_role", "What is your role in this poll?", choices = c("Guest", "Admin"), selected = "Guest")
+           )
+    ),
+    br()
+  ),
   
-  tabsetPanel(
-    tabPanel("Guest panel",
+  conditionalPanel(
+    condition = "input.user_role == 'Guest'",
+    tabPanel("Guest Panel",
              conditionalPanel(
                condition = "!output.validGuestConf",
                wellPanel(
-                 textInput("guest_token_input", "Enter Access Token:"),
-                 actionButton("guest_enter", "Enter Conference")
+                 h5("As a guest, you can suggest answers and vote in real-time within a room."),
+                 tags$ul(
+                   tags$li("Enter the access token provided by the admin."),
+                   tags$li("Once inside, choose a question to view, suggest answers, and vote."),
+                   tags$li("You can vote on multiple answers unless limited by the admin.")
+                 ),
+                 textInput("guest_token_input", "Enter access token:"),
+                 actionButton("guest_enter", "Enter conference")
                )
              ),
              uiOutput("user_count_ui_guest"),
@@ -26,14 +48,24 @@ ui <- fluidPage(
                uiOutput("question_ui_guest"),
                uiOutput("guest_question_controls")
              )
-    ),
-    
-    tabPanel("Admin panel",
+    )
+  ),
+  
+  conditionalPanel(
+    condition = "input.user_role == 'Admin'",
+    tabPanel("Admin Panel",
              conditionalPanel(
                condition = "!output.isAdmin",
                wellPanel(
-                 textInput("new_conf_id", "Create New Conference ID:"),
-                 actionButton("create_conf", "Create Conference")
+                 h5("Create a new room to get started."),
+                 tags$ul(
+                   tags$li("Each room generates a unique access token to share with participants."),
+                   tags$li("Add, delete, or reset questions and control voting settings."),
+                   tags$li("View results from your voting room.")
+                   
+                 ),
+                 textInput("new_conf_id", "Conference ID:"),
+                 actionButton("create_conf", "Create conference")
                )
              ),
              uiOutput("admin_token_display"),
@@ -45,7 +77,7 @@ ui <- fluidPage(
                         wellPanel(
                           h4("Question management"),
                           textInput("new_question_text", "New question text:"),
-                          actionButton("add_question", "Add question"),
+                          actionButton("add_question", "Add Question"),
                           selectInput("delete_question_id", "Delete question:", choices = NULL),
                           actionButton("delete_question", "Delete"),
                           selectInput("restart_question_id", "Restart question responses:", choices = NULL),
@@ -57,20 +89,36 @@ ui <- fluidPage(
                           h4("General settings"),
                           numericInput("max_votes", "Max votes per user:", value = 5, min = 1),
                           checkboxInput("allow_multiple", "Allow multiple votes per option", value = TRUE),
-                          actionButton("apply_settings", "Apply settings")
+                          actionButton("apply_settings", "Apply Settings")
                         )
                  )
                ),
                wellPanel(
-                 h4("Admin view"),
+                 h4("Live results"),
                  uiOutput("question_ui_admin"),
                  DTOutput("admin_table")
-                 
                )
              )
     )
+  ),
+  
+  fluidRow(
+    column(12,
+           wellPanel(
+             tags$div(
+               style = "text-align: center;",
+               p("Polapp was designed by ",
+                 a("Dr. Cristian Roman-Palacios (Data Diversity Lab, U of A)", href = "https://datadiversitylab.github.io/", target = "_blank"),
+                 " • ",
+                 a("GitHub Repo", href = "https://github.com/datadiversitylab/polapp", target = "_blank")
+               ),
+               tags$small("Note: No data is stored permanently. All session data is lost when the admin session ends.")
+             )
+           )
+    )
   )
 )
+
 
 server <- function(input, output, session) {
   session_id <- paste0("user_", as.integer(Sys.time()), "_", sample(10000, 1))
@@ -79,6 +127,7 @@ server <- function(input, output, session) {
   is_admin <- reactiveVal(FALSE)
   admin_conference_id <- reactiveVal(NULL)
   guest_conference_id <- reactiveVal(NULL)
+  guest_selected_question <- reactiveVal(NULL)
   
   output$isAdmin <- reactive({ is_admin() })
   outputOptions(output, "isAdmin", suspendWhenHidden = FALSE)
@@ -152,14 +201,14 @@ server <- function(input, output, session) {
     conf <- admin_conference_id()
     if (is.null(conf)) return(NULL)
     users <- length(global_data$user_counts[[conf]])
-    h5(paste("Users online in", conf, ":", users))
+    h5(paste0("Users online in", conf, " :", users))
   })
   
   output$user_count_ui_guest <- renderUI({
     conf <- guest_conference_id()
     if (is.null(conf)) return(NULL)
     users <- length(global_data$user_counts[[conf]])
-    h5(paste("Users online in", conf, ":", users))
+    h5(paste0("Users online in", conf, " :", users))
   })
   
   observeEvent(input$add_question, {
@@ -200,15 +249,20 @@ server <- function(input, output, session) {
     conf <- guest_conference_id()
     if (is.null(conf) || !(conf %in% names(global_data$conferences))) return(NULL)
     questions <- global_data$conferences[[conf]]
-    if (length(questions) == 0) return(h5("No questions yet."))
+    if (length(questions) == 0) return(h5("Please request the admin to create a new question."))
     selectInput("question_id_guest", "Choose a question:",
-                choices = setNames(names(questions), sapply(questions, `[[`, "text")))
+                choices = setNames(names(questions), sapply(questions, `[[`, "text")),
+                selected = guest_selected_question())
+  })
+  
+  observeEvent(input$question_id_guest, {
+    guest_selected_question(input$question_id_guest)
   })
   
   output$question_ui_admin <- renderUI({
     conf <- admin_conference_id()
     questions <- global_data$conferences[[conf]]
-    if (length(questions) == 0) return(h5("No questions available."))
+    if (length(questions) == 0) return(h5("Please request the admin to create a new question."))
     selectInput("question_id_admin", "Select a question to view:",
                 choices = setNames(names(questions), sapply(questions, `[[`, "text")))
   })
@@ -233,7 +287,7 @@ server <- function(input, output, session) {
   
   observeEvent(input$submit_answer, {
     conf <- guest_conference_id()
-    qid <- input$question_id_guest
+    qid <- guest_selected_question()
     req(conf, qid, input$answer)
     responses <- global_data$conferences[[conf]][[qid]]$responses
     new_id <- if (nrow(responses) == 0) 1 else max(responses$ID) + 1
@@ -241,12 +295,11 @@ server <- function(input, output, session) {
     responses <- rbind(responses, new_entry)
     global_data$conferences[[conf]][[qid]]$responses <- responses
     updateTextInput(session, "answer", value = "")
-    updateSelectInput(session, "question_id_guest", selected = qid)
   })
   
   output$vote_table <- renderDT({
     conf <- guest_conference_id()
-    qid <- input$question_id_guest
+    qid <- guest_selected_question()
     req(conf, qid)
     responses <- global_data$conferences[[conf]][[qid]]$responses
     if (nrow(responses) == 0) return(NULL)
@@ -261,7 +314,7 @@ server <- function(input, output, session) {
   
   observeEvent(input$vote_table_rows_selected, {
     conf <- guest_conference_id()
-    qid <- input$question_id_guest
+    qid <- guest_selected_question()
     selected <- input$vote_table_rows_selected
     req(conf, qid, length(selected) > 0)
     settings <- global_data$settings[[conf]]
@@ -288,7 +341,6 @@ server <- function(input, output, session) {
     votes[id_char] <- current_vote + 1
     votes_all[[qid]] <- votes
     user_votes(votes_all)
-    updateSelectInput(session, "question_id_guest", selected = qid)
   })
   
   output$admin_table <- renderDT({
