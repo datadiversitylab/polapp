@@ -108,10 +108,14 @@ ui <- fluidPage(
              tags$div(
                style = "text-align: center;",
                p("Polapp was designed by ",
-                 a("Dr. Cristian Roman-Palacios (Data Diversity Lab, U of A)", href = "https://datadiversitylab.github.io/", target = "_blank"),
-                 " • ",
+                 a("Dr. Cristian Román-Palacios (Data Diversity Lab, U of A)", href = "https://datadiversitylab.github.io/", target = "_blank"),
+                 " • ", 
                  a("GitHub Repo", href = "https://github.com/datadiversitylab/polapp", target = "_blank")
                ),
+               p("Initial concept by ", 
+                 a("Dr. Heidi Steiner", href = "https://heidiesteiner.netlify.app/", target = "_blank")
+                 )
+               ,
                tags$small("Note: No data is stored permanently. All session data is lost when the admin session ends.")
              )
            )
