@@ -62,7 +62,6 @@ ui <- fluidPage(
                    tags$li("Each room generates a unique access token to share with participants."),
                    tags$li("Add, delete, or reset questions and control voting settings."),
                    tags$li("View results from your voting room.")
-                   
                  ),
                  textInput("new_conf_id", "Conference ID:"),
                  actionButton("create_conf", "Create conference")
@@ -126,15 +125,18 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   session_id <- paste0("user_", as.integer(Sys.time()), "_", sample(10000, 1))
+  
   user_votes <- reactiveVal(list())
   vote_message <- reactiveVal("")
   is_admin <- reactiveVal(FALSE)
   admin_conference_id <- reactiveVal(NULL)
   guest_conference_id <- reactiveVal(NULL)
   guest_selected_question <- reactiveVal(NULL)
+  guest_typed_answer <- reactiveVal("") 
   
   output$isAdmin <- reactive({ is_admin() })
   outputOptions(output, "isAdmin", suspendWhenHidden = FALSE)
+  
   output$validGuestConf <- reactive({ !is.null(guest_conference_id()) })
   outputOptions(output, "validGuestConf", suspendWhenHidden = FALSE)
   
@@ -144,7 +146,7 @@ server <- function(input, output, session) {
       showNotification("Invalid or duplicate ID", type = "error")
       return()
     }
-    token <- paste0(sample(c(LETTERS, letters, 0:9), 8, replace = TRUE), collapse = "")
+    token <- paste0(sample(c(LETTERS, letters, 0:9), 4, replace = TRUE), collapse = "")
     global_data$conferences[[id]] <- list()
     global_data$settings[[id]] <- list(max_votes = 5, allow_multiple = FALSE)
     global_data$user_counts[[id]] <- list()
@@ -205,14 +207,14 @@ server <- function(input, output, session) {
     conf <- admin_conference_id()
     if (is.null(conf)) return(NULL)
     users <- length(global_data$user_counts[[conf]])
-    h5(paste0("Users online in", conf, " :", users))
+    h5(paste("Users online in", conf, ":", users))
   })
   
   output$user_count_ui_guest <- renderUI({
     conf <- guest_conference_id()
     if (is.null(conf)) return(NULL)
     users <- length(global_data$user_counts[[conf]])
-    h5(paste0("Users online in", conf, " :", users))
+    h5(paste("Users online in", conf, ":", users))
   })
   
   observeEvent(input$add_question, {
@@ -263,6 +265,10 @@ server <- function(input, output, session) {
     guest_selected_question(input$question_id_guest)
   })
   
+  observeEvent(input$answer, {
+    guest_typed_answer(input$answer)
+  })
+  
   output$question_ui_admin <- renderUI({
     conf <- admin_conference_id()
     questions <- global_data$conferences[[conf]]
@@ -278,7 +284,7 @@ server <- function(input, output, session) {
     if (length(questions) == 0) return(NULL)
     sidebarLayout(
       sidebarPanel(
-        textInput("answer", "Suggest an answer:"),
+        textInput("answer", "Suggest an answer:", value = guest_typed_answer()),
         actionButton("submit_answer", "Submit")
       ),
       mainPanel(
@@ -298,7 +304,7 @@ server <- function(input, output, session) {
     new_entry <- data.frame(ID = new_id, Answer = input$answer, Votes = 0, stringsAsFactors = FALSE)
     responses <- rbind(responses, new_entry)
     global_data$conferences[[conf]][[qid]]$responses <- responses
-    updateTextInput(session, "answer", value = "")
+    guest_typed_answer("")
   })
   
   output$vote_table <- renderDT({
